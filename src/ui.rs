@@ -1017,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_bar_dims_auto_named_tabs_and_emphasizes_custom_tabs() {
+    fn tab_bar_keeps_auto_named_tabs_readable_and_emphasizes_active_custom_tab() {
         let mut app = crate::app::state::AppState::test_new();
         let mut ws = Workspace::test_new("test");
         let custom_tab = ws.test_add_tab(Some("logs"));
@@ -1040,8 +1040,8 @@ mod tests {
         let auto_style = buffer[(auto_rect.x + 1, auto_rect.y)].style();
         let custom_style = buffer[(custom_rect.x + 1, custom_rect.y)].style();
 
-        assert_eq!(auto_style.fg, Some(app.palette.overlay0));
-        assert!(auto_style.add_modifier.contains(Modifier::DIM));
+        assert_eq!(auto_style.fg, Some(app.palette.subtext0));
+        assert!(!auto_style.add_modifier.contains(Modifier::DIM));
         assert_eq!(custom_style.fg, Some(app.palette.panel_bg));
         assert!(custom_style.add_modifier.contains(Modifier::BOLD));
     }
