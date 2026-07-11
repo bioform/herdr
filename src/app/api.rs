@@ -391,6 +391,9 @@ impl App {
                     runtime.set_full_lifecycle_authority_active(
                         terminal.full_lifecycle_hook_authority_active(),
                     );
+                    // Push the reserved-native session hint on the same pass so the
+                    // detection loop can fall back to it when the foreground process
+                    // is unidentifiable (e.g. an agent run behind a wrapper binary).
                     runtime.set_reported_native_agent(terminal.reported_native_agent_hint());
                 }
             }
