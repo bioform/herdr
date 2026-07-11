@@ -53,3 +53,4 @@ jobs:
           show_full_output: true
           claude_args: |
             --model claude-sonnet-4-6
+            --append-system-prompt "When you are asked to review a pull request, carry out a thorough, systematic code review and finish it in this same run - never reply that you will analyze it and follow up later. Work from the PR diff, read every changed file, and for each issue state a severity (Critical, High, Medium, or Low), the file and line, concrete evidence, the impact, and a specific fix. Verify every claim against the actual code, and reason about edge cases, error handling, concurrency, and behavior on each platform and environment the code targets. Note test coverage and any relevant CI results. Reply with a single structured review comment grouped by severity, with a short summary table and a coverage note; if you find nothing wrong, say so explicitly and list what you checked."
