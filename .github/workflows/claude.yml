@@ -1,0 +1,55 @@
+name: Claude Code
+
+# Responds when someone mentions `@claude` in an issue, a pull request (body or
+# title), or an issue/PR review comment. Claude can read the thread, the PR
+# diff, and CI results, then reply or push commits.
+#
+# Auth uses a single repository secret (no cloud-provider infra required).
+#
+# One-time setup (repo admin, on bioform/herdr):
+#   Settings > Secrets and variables > Actions > New repository secret
+#     CLAUDE_CODE_OAUTH_TOKEN = output of `claude setup-token`
+#   (Alternatively set an ANTHROPIC_API_KEY secret and change the `with:` key
+#    below from `claude_code_oauth_token` to `anthropic_api_key`.)
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request:
+    types: [opened, synchronize]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'pull_request' && (contains(github.event.pull_request.body, '@claude') || contains(github.event.pull_request.title, '@claude'))) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read # Required for Claude to read CI results on PRs
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          show_full_output: true
+          claude_args: |
+            --model claude-sonnet-4-6
