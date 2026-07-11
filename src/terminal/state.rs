@@ -1255,6 +1255,21 @@ impl TerminalState {
         self.detected_agent
     }
 
+    /// Agent identity a pane reported via a reserved-native session (claude,
+    /// codex, …). Reserved-native agents report only their session and rely on
+    /// the live screen detector for state; when their foreground process can't
+    /// be locally identified (e.g. it runs behind a wrapper binary), the
+    /// detector uses this hint to pick the right manifest instead of giving up.
+    /// Full-lifecycle hook agents report state directly and are excluded here.
+    pub fn reported_native_agent_hint(&self) -> Option<Agent> {
+        let session = self.persisted_agent_session.as_ref()?;
+        if crate::agent_resume::is_reserved_native_state_source(&session.source, &session.agent) {
+            crate::detect::parse_agent_label(&session.agent)
+        } else {
+            None
+        }
+    }
+
     pub fn full_lifecycle_hook_authority_active(&self) -> bool {
         self.live_full_lifecycle_hook_authority()
     }
@@ -4275,6 +4290,34 @@ mod tests {
         assert!(mutation.session_ref_changed);
         assert!(mutation.effective_state_change.is_none());
         assert!(terminal.persisted_agent_session.is_none());
+    }
+
+    #[test]
+    fn reported_native_agent_hint_maps_reserved_native_session() {
+        let mut terminal = test_terminal();
+        assert_eq!(terminal.reported_native_agent_hint(), None);
+
+        terminal.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+            source: "herdr:claude".into(),
+            agent: "claude".into(),
+            session_ref: crate::agent_resume::AgentSessionRef::id("claude-session").unwrap(),
+        });
+
+        assert_eq!(terminal.reported_native_agent_hint(), Some(Agent::Claude));
+    }
+
+    #[test]
+    fn reported_native_agent_hint_ignores_full_lifecycle_sessions() {
+        // Full-lifecycle hook agents (e.g. hermes) report state directly and
+        // must not be offered as a screen-detection fallback.
+        let mut terminal = test_terminal();
+        terminal.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+            source: "herdr:hermes".into(),
+            agent: "hermes".into(),
+            session_ref: crate::agent_resume::AgentSessionRef::id("hermes-session").unwrap(),
+        });
+
+        assert_eq!(terminal.reported_native_agent_hint(), None);
     }
 
     #[test]
