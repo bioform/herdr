@@ -536,6 +536,26 @@ fn probe_foreground_process(pid: u32, foreground_pgid: Option<u32>) -> ProcessPr
     )
 }
 
+/// Choose the agent the detection loop should attribute the foreground to.
+///
+/// The foreground process probe is authoritative when it identifies an agent.
+/// When it can't (a reserved-native agent such as claude/codex running behind a
+/// wrapper or renamed binary), fall back to the agent the pane reported via its
+/// session — but only while a real, non-shell process is in the foreground, so
+/// the normal exit path (foreground returns to the pane shell) still clears the
+/// agent instead of leaving a stale entry behind.
+fn detection_agent_with_reported_fallback(
+    probed_agent: Option<Agent>,
+    foreground_is_pane_shell: bool,
+    reported_agent: impl FnOnce() -> Option<Agent>,
+) -> Option<Agent> {
+    match probed_agent {
+        Some(agent) => Some(agent),
+        None if foreground_is_pane_shell => None,
+        None => reported_agent(),
+    }
+}
+
 #[cfg(unix)]
 fn spawn_basic_detection_task(
     pane_id: PaneId,
@@ -543,6 +563,7 @@ fn spawn_basic_detection_task(
     terminal: Arc<PaneTerminal>,
     detection_content_seq: Arc<AtomicU64>,
     full_lifecycle_authority_active: Arc<AtomicBool>,
+    reported_native_agent: Arc<Mutex<Option<Agent>>>,
     state_events: mpsc::Sender<AppEvent>,
 ) -> (
     tokio::task::AbortHandle,
@@ -648,7 +669,11 @@ fn spawn_basic_detection_task(
                 let probe = probe_foreground_process(pid, foreground_pgid);
                 let process_group_id = probe.process_group_id;
                 let foreground_is_pane_shell = probe.foreground_is_pane_shell;
-                let mut new_agent = probe.agent;
+                let mut new_agent = detection_agent_with_reported_fallback(
+                    probe.agent,
+                    foreground_is_pane_shell,
+                    || reported_native_agent.lock().ok().and_then(|guard| *guard),
+                );
                 if let Some(suppressed_agent) = suppressed_agent {
                     if new_agent == Some(suppressed_agent) {
                         new_agent = None;
@@ -913,6 +938,10 @@ pub struct PaneRuntime {
     kitty_keyboard_flags: Arc<AtomicU16>,
     detection_content_seq: Arc<AtomicU64>,
     full_lifecycle_authority_active: Arc<AtomicBool>,
+    // Agent reported for this pane via a reserved-native session (claude, codex,
+    // …). The detection loop falls back to this when the foreground process
+    // itself can't be locally identified (e.g. it runs behind a wrapper binary).
+    reported_native_agent: Arc<Mutex<Option<Agent>>>,
     detect_reset_notify: Arc<Notify>,
     pending_release: Arc<Mutex<Option<PendingAgentRelease>>>,
     preserve_processes_on_drop: bool,
@@ -1765,12 +1794,14 @@ impl PaneRuntime {
         };
 
         let full_lifecycle_authority_active = Arc::new(AtomicBool::new(false));
+        let reported_native_agent = Arc::new(Mutex::new(None));
         let (detect_handle, detect_reset_notify, pending_release) = spawn_basic_detection_task(
             pane_id,
             child_pid.clone(),
             terminal.clone(),
             detection_content_seq.clone(),
             full_lifecycle_authority_active.clone(),
+            reported_native_agent.clone(),
             events,
         );
 
@@ -1785,6 +1816,7 @@ impl PaneRuntime {
             kitty_keyboard_flags,
             detection_content_seq,
             full_lifecycle_authority_active,
+            reported_native_agent,
             detect_reset_notify,
             pending_release,
             preserve_processes_on_drop: true,
@@ -1838,6 +1870,7 @@ impl PaneRuntime {
         let child_wait_completed = Arc::new(AtomicBool::new(false));
         let detection_content_seq = Arc::new(AtomicU64::new(0));
         let full_lifecycle_authority_active = Arc::new(AtomicBool::new(false));
+        let reported_native_agent = Arc::new(Mutex::new(None));
         {
             let child_pid = child_pid.clone();
             let child_wait_completed = child_wait_completed.clone();
@@ -1934,6 +1967,7 @@ impl PaneRuntime {
             let state_events = events.clone();
             let detection_content_seq = detection_content_seq.clone();
             let full_lifecycle_authority_active_for_task = full_lifecycle_authority_active.clone();
+            let reported_native_agent_for_task = reported_native_agent.clone();
             let render_notify = render_notify.clone();
             let render_dirty = render_dirty.clone();
             let detect_reset_notify = Arc::new(Notify::new());
@@ -2049,7 +2083,16 @@ impl PaneRuntime {
                             let process_name = probe.process_name;
                             let process_group_id = probe.process_group_id;
                             let foreground_is_pane_shell = probe.foreground_is_pane_shell;
-                            let mut new_agent = probe.agent;
+                            let mut new_agent = detection_agent_with_reported_fallback(
+                                probe.agent,
+                                foreground_is_pane_shell,
+                                || {
+                                    reported_native_agent_for_task
+                                        .lock()
+                                        .ok()
+                                        .and_then(|guard| *guard)
+                                },
+                            );
 
                             if let Some(suppressed_agent) = suppressed_agent {
                                 if new_agent == Some(suppressed_agent) {
@@ -2293,6 +2336,7 @@ impl PaneRuntime {
             kitty_keyboard_flags,
             detection_content_seq,
             full_lifecycle_authority_active,
+            reported_native_agent,
             detect_reset_notify,
             pending_release,
             preserve_processes_on_drop: false,
@@ -2325,6 +2369,12 @@ impl PaneRuntime {
             .swap(active, Ordering::AcqRel);
         if active && !previous {
             self.detect_reset_notify.notify_one();
+        }
+    }
+
+    pub fn set_reported_native_agent(&self, agent: Option<Agent>) {
+        if let Ok(mut guard) = self.reported_native_agent.lock() {
+            *guard = agent;
         }
     }
 
@@ -2733,6 +2783,7 @@ impl PaneRuntime {
                 kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
                 detection_content_seq: Arc::new(AtomicU64::new(0)),
                 full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
+                reported_native_agent: Arc::new(Mutex::new(None)),
                 detect_reset_notify: Arc::new(Notify::new()),
                 pending_release: Arc::new(Mutex::new(None)),
                 preserve_processes_on_drop: true,
@@ -2746,6 +2797,40 @@ impl PaneRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reported_fallback_prefers_process_identified_agent() {
+        let called = std::cell::Cell::new(false);
+        let agent = detection_agent_with_reported_fallback(Some(Agent::Codex), false, || {
+            called.set(true);
+            Some(Agent::Claude)
+        });
+        assert_eq!(agent, Some(Agent::Codex));
+        assert!(
+            !called.get(),
+            "reported fallback must not run when the process is identified"
+        );
+    }
+
+    #[test]
+    fn reported_fallback_used_when_process_unidentified_and_foreground_not_shell() {
+        let agent = detection_agent_with_reported_fallback(None, false, || Some(Agent::Claude));
+        assert_eq!(agent, Some(Agent::Claude));
+    }
+
+    #[test]
+    fn reported_fallback_skipped_when_foreground_is_pane_shell() {
+        // Foreground is back to the pane shell: the agent process is gone, so a
+        // stale reported session must not resurrect it.
+        let agent = detection_agent_with_reported_fallback(None, true, || Some(Agent::Claude));
+        assert_eq!(agent, None);
+    }
+
+    #[test]
+    fn reported_fallback_none_when_no_reported_agent() {
+        let agent = detection_agent_with_reported_fallback(None, false, || None);
+        assert_eq!(agent, None);
+    }
 
     #[test]
     fn shutdown_liveness_treats_reaped_direct_child_as_gone() {
@@ -3191,6 +3276,7 @@ mod tests {
             kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
             detection_content_seq: Arc::new(AtomicU64::new(0)),
             full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
+            reported_native_agent: Arc::new(Mutex::new(None)),
             detect_reset_notify: Arc::new(Notify::new()),
             pending_release: Arc::new(Mutex::new(None)),
             preserve_processes_on_drop: true,
@@ -3222,6 +3308,7 @@ mod tests {
             kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
             detection_content_seq: Arc::new(AtomicU64::new(0)),
             full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
+            reported_native_agent: Arc::new(Mutex::new(None)),
             detect_reset_notify: Arc::new(Notify::new()),
             pending_release: Arc::new(Mutex::new(None)),
             preserve_processes_on_drop: true,

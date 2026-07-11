@@ -222,6 +222,10 @@ impl TerminalRuntime {
         self.0.set_full_lifecycle_authority_active(active);
     }
 
+    pub fn set_reported_native_agent(&self, agent: Option<crate::detect::Agent>) {
+        self.0.set_reported_native_agent(agent);
+    }
+
     pub fn resize(&self, rows: u16, cols: u16, cell_width_px: u32, cell_height_px: u32) {
         self.0.resize(rows, cols, cell_width_px, cell_height_px);
     }

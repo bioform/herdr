@@ -391,6 +391,7 @@ impl App {
                     runtime.set_full_lifecycle_authority_active(
                         terminal.full_lifecycle_hook_authority_active(),
                     );
+                    runtime.set_reported_native_agent(terminal.reported_native_agent_hint());
                 }
             }
         }
