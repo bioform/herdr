@@ -329,12 +329,9 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
                 base.add_modifier(Modifier::BOLD)
             }
         } else if tab.is_auto_named() {
-            Style::default()
-                .fg(p.overlay0)
-                .bg(p.surface0)
-                .add_modifier(Modifier::DIM)
+            Style::default().fg(p.subtext0).bg(p.surface0)
         } else {
-            Style::default().fg(p.overlay1).bg(p.surface0)
+            Style::default().fg(p.text).bg(p.surface0)
         };
         let width = rect.width as usize;
         let name = tab_chrome_label(ws, idx);
@@ -461,6 +458,44 @@ mod tests {
         assert_eq!(style.bg, Some(app.palette.accent));
         assert!(!style.add_modifier.contains(Modifier::DIM));
         assert!(!style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn inactive_tabs_use_readable_foreground_without_dim() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        let auto_idx = ws.test_add_tab(None); // inactive, auto-named
+        let named_idx = ws.test_add_tab(Some("named")); // inactive, custom-named
+        ws.active_tab = 0;
+
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
+        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        app.view.tab_hit_areas = view.tab_hit_areas;
+
+        let backend = TestBackend::new(40, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        // Inactive auto-named tab: readable subtext0 on surface0, never dimmed.
+        let auto_rect = app.view.tab_hit_areas[auto_idx];
+        assert!(auto_rect.width > 0, "auto-named tab should be visible");
+        let auto_style = buffer[(auto_rect.x + 1, auto_rect.y)].style();
+        assert_eq!(auto_style.fg, Some(app.palette.subtext0));
+        assert_eq!(auto_style.bg, Some(app.palette.surface0));
+        assert!(!auto_style.add_modifier.contains(Modifier::DIM));
+
+        // Inactive custom-named tab: brighter text on surface0, preserving hierarchy.
+        let named_rect = app.view.tab_hit_areas[named_idx];
+        assert!(named_rect.width > 0, "custom-named tab should be visible");
+        let named_style = buffer[(named_rect.x + 1, named_rect.y)].style();
+        assert_eq!(named_style.fg, Some(app.palette.text));
+        assert_eq!(named_style.bg, Some(app.palette.surface0));
+        assert!(!named_style.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
