@@ -63,6 +63,10 @@ pub fn start_server(
         Some(ServerCapabilities {
             live_handoff: crate::platform::capabilities().live_handoff,
             detached_server_daemon: crate::platform::current_process_is_detached_server_daemon(),
+            // Available on every platform: the client always writes OSC 0 for a
+            // WindowTitle message; the `[terminal] set_window_title` config gates
+            // whether the server actually drives it.
+            window_title: true,
         }),
     )
 }
@@ -806,6 +810,7 @@ mod tests {
             Some(ServerCapabilities {
                 live_handoff: true,
                 detached_server_daemon: true,
+                window_title: true,
             }),
         );
 

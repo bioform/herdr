@@ -94,6 +94,19 @@ fn platform_state_dir() -> PathBuf {
 
 impl Config {
     pub fn load() -> LoadedConfig {
+        let mut loaded = Self::load_from_file();
+        // A `HERDR_SET_WINDOW_TITLE` override (set by the --window-title /
+        // --no-window-title launch flags, inherited by the spawned server) wins
+        // over the config file. Applied here at initial load only — the live
+        // reload path re-reads the file, so `server reload-config` stays
+        // authoritative.
+        if let Some(value) = crate::config::set_window_title_env_override() {
+            loaded.config.terminal.set_window_title = value;
+        }
+        loaded
+    }
+
+    fn load_from_file() -> LoadedConfig {
         let path = config_path();
         if path.exists() {
             match std::fs::read_to_string(&path) {

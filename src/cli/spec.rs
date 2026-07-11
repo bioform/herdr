@@ -15,6 +15,8 @@ pub(super) fn command() -> Command {
                 .help("Choose local or server keybindings for remote attach"),
         )
         .arg(flag("handoff").help("Opt into live handoff for update or remote attach"))
+        .arg(flag("window-title").help("Drive the outer terminal title from agent state"))
+        .arg(flag("no-window-title").help("Do not drive the outer terminal title"))
         .arg(flag("default-config").help("Print default configuration and exit"))
         .arg(
             Arg::new("version")

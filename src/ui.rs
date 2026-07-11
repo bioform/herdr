@@ -21,6 +21,10 @@ mod tabs;
 mod text;
 mod widgets;
 
+/// Shared with the outer window-title driver so the tab icons use the exact
+/// same per-agent glyphs as the sidebar.
+pub(crate) use status::agent_state_glyph;
+
 use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
@@ -97,10 +101,31 @@ const COLLAPSED_WIDTH: u16 = 4; // num + space + dot + separator
 // Braille spinner frames — smooth rotation
 const SPINNERS: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/// Resolve a spinner frame glyph by raw index (wraps). Shared by the sidebar
+/// spinner and the outer window-title driver so both animate with the same
+/// braille frames.
+pub(crate) fn spinner_glyph_at(index: u32) -> &'static str {
+    SPINNERS[(index as usize) % SPINNERS.len()]
+}
+
 /// Map spinner_tick (incremented every frame at ~60fps) to a spinner frame.
 /// We want ~8 updates/sec so divide by 8.
 pub(super) fn spinner_frame(tick: u32) -> &'static str {
-    SPINNERS[(tick as usize / 8) % SPINNERS.len()]
+    spinner_glyph_at(tick / 8)
+}
+
+// "Breathing" pulse frames for a blocked agent in the (monochrome) outer tab
+// title: a dot that grows to the blocked fisheye `◉` and back. Kept to widely
+// supported, non-status glyphs so it reads as one pulsing indicator and can't
+// be mistaken for the done/idle/unknown icons.
+const BLOCKED_PULSE: &[&str] = &["·", "∙", "•", "◉", "•", "∙"];
+
+/// Resolve the blocked "breathing" pulse glyph for the window-title driver's
+/// 100 ms frame counter. Advances at half rate (~200 ms/frame) for a gentle
+/// pulse rather than a fast blink. Only used in the monochrome tab title; the
+/// sidebar keeps a static, colored `◉`.
+pub(crate) fn blocked_pulse_glyph_at(frame: u32) -> &'static str {
+    BLOCKED_PULSE[((frame / 2) as usize) % BLOCKED_PULSE.len()]
 }
 
 /// Compute view geometry and reconcile pane sizes.
@@ -579,6 +604,20 @@ mod tests {
     use crate::{app::state::ViewLayout, layout::PaneInfo, workspace::Workspace};
     use ratatui::style::Color;
     use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn blocked_pulse_cycles_and_peaks_at_fisheye() {
+        use std::collections::HashSet;
+        // Half-rate cadence: each glyph is held for two consecutive 100ms frames.
+        assert_eq!(blocked_pulse_glyph_at(0), blocked_pulse_glyph_at(1));
+        assert_ne!(blocked_pulse_glyph_at(0), blocked_pulse_glyph_at(2));
+        // A full cycle visits exactly the ramp glyphs and peaks at the blocked glyph.
+        let cycle: HashSet<&str> = (0..(BLOCKED_PULSE.len() as u32 * 2))
+            .map(blocked_pulse_glyph_at)
+            .collect();
+        assert!(cycle.contains("◉"), "pulse must peak at the blocked glyph");
+        assert_eq!(cycle, BLOCKED_PULSE.iter().copied().collect::<HashSet<_>>());
+    }
 
     #[test]
     fn copy_feedback_offset_only_increases_when_toast_rect_overlaps() {

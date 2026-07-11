@@ -288,13 +288,25 @@ pub fn wait_for_server_socket(socket_path: &Path, timeout: Duration) -> io::Resu
 /// 1. Check if a server is listening on the client socket
 /// 2. If no server → spawn server daemon → wait for socket readiness
 /// 3. Run the thin client (which connects to the server)
-pub fn auto_detect_launch() -> io::Result<()> {
+pub fn auto_detect_launch(window_title_flag: Option<bool>) -> io::Result<()> {
     let socket_path = client_socket_path();
     info!(path = %socket_path.display(), "auto-detect launch starting");
 
     if is_server_listening_at(&socket_path) {
         validate_running_server_compatibility()?;
         info!("server already running, attaching as client");
+        // A window-title override only reaches a server at startup. Gated on the
+        // explicit flag (not env presence) so `--no-window-title` reads
+        // correctly and a shell-exported HERDR_SET_WINDOW_TITLE does not trigger
+        // a spurious note on every attach.
+        if let Some(enabled) = window_title_flag {
+            let action = if enabled { "enable" } else { "disable" };
+            eprintln!(
+                "herdr: note: --window-title/--no-window-title only applies when herdr starts \
+                 the server; a server is already running for this session, so the request to \
+                 {action} the outer terminal title will not take effect until it is restarted."
+            );
+        }
     } else {
         info!("no server running, spawning server daemon");
         spawn_server_daemon()?;

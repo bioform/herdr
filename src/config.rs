@@ -35,6 +35,31 @@ pub const DEFAULT_SCROLLBACK_LIMIT_BYTES: usize = 10_000_000;
 pub const DEFAULT_MOUSE_SCROLL_LINES: usize = 3;
 pub const DEFAULT_MOBILE_WIDTH_THRESHOLD: u16 = 64;
 
+/// Environment variable that overrides `[terminal] set_window_title` for a
+/// herdr process (the env value wins over the config file). Set by the
+/// `--window-title` / `--no-window-title` launch flags so the spawned server
+/// daemon inherits it. Applied at initial config load only, so a later
+/// `server reload-config` still honors the on-disk value.
+pub const SET_WINDOW_TITLE_ENV_VAR: &str = "HERDR_SET_WINDOW_TITLE";
+
+/// Parse a boolean-ish setting value: `1`/`true`/`on`/`yes` vs
+/// `0`/`false`/`off`/`no` (case-insensitive). `None` for anything else.
+pub(crate) fn parse_bool_setting(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "on" | "yes" => Some(true),
+        "0" | "false" | "off" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+/// The `HERDR_SET_WINDOW_TITLE` override, if set to a recognized boolean.
+pub(crate) fn set_window_title_env_override() -> Option<bool> {
+    std::env::var(SET_WINDOW_TITLE_ENV_VAR)
+        .ok()
+        .as_deref()
+        .and_then(parse_bool_setting)
+}
+
 #[cfg(test)]
 pub(crate) fn app_dir_name() -> &'static str {
     io::app_dir_name()

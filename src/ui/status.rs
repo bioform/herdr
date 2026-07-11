@@ -203,19 +203,40 @@ pub(super) fn state_dot(state: AgentState, seen: bool, p: &Palette) -> (&'static
     }
 }
 
+/// Per-agent status glyph, shared by the sidebar icon and the outer
+/// window-title driver so the two never drift. `working` and `blocked` are the
+/// (possibly animated) glyphs for those states; callers supply their own
+/// animation source — the sidebar uses `spinner_frame` for working and a
+/// static `◉` for blocked, while the monochrome tab title animates both.
+pub(crate) fn agent_state_glyph(
+    state: AgentState,
+    seen: bool,
+    working: &'static str,
+    blocked: &'static str,
+) -> &'static str {
+    match (state, seen) {
+        (AgentState::Blocked, _) => blocked,
+        (AgentState::Working, _) => working,
+        (AgentState::Idle, false) => "●",
+        (AgentState::Idle, true) => "✓",
+        (AgentState::Unknown, _) => "○",
+    }
+}
+
 pub(super) fn agent_icon(
     state: AgentState,
     seen: bool,
     tick: u32,
     p: &Palette,
 ) -> (&'static str, Style) {
-    match (state, seen) {
-        (AgentState::Blocked, _) => ("◉", Style::default().fg(p.red)),
-        (AgentState::Working, _) => (super::spinner_frame(tick), Style::default().fg(p.yellow)),
-        (AgentState::Idle, false) => ("●", Style::default().fg(p.teal)),
-        (AgentState::Idle, true) => ("✓", Style::default().fg(p.green)),
-        (AgentState::Unknown, _) => ("○", Style::default().fg(p.overlay0)),
-    }
+    // The sidebar keeps a static, colored blocked glyph — the red color conveys
+    // urgency there, so it needs no animation (the monochrome tab title pulses
+    // the blocked glyph instead).
+    let glyph = agent_state_glyph(state, seen, super::spinner_frame(tick), "◉");
+    (
+        glyph,
+        Style::default().fg(state_label_color(state, seen, p)),
+    )
 }
 
 pub(super) fn state_label(state: AgentState, seen: bool) -> &'static str {
@@ -242,6 +263,17 @@ pub(super) fn state_label_color(state: AgentState, seen: bool, p: &Palette) -> C
 mod tests {
     use super::*;
     use crate::config::{ToastClipboardPosition, ToastHerdrPosition};
+
+    #[test]
+    fn agent_state_glyph_maps_working_and_blocked_from_params() {
+        // Working and blocked use the caller-supplied (possibly animated) glyphs;
+        // done/idle/unknown are static.
+        assert_eq!(agent_state_glyph(AgentState::Working, false, "W", "B"), "W");
+        assert_eq!(agent_state_glyph(AgentState::Blocked, true, "W", "B"), "B");
+        assert_eq!(agent_state_glyph(AgentState::Idle, false, "W", "B"), "●");
+        assert_eq!(agent_state_glyph(AgentState::Idle, true, "W", "B"), "✓");
+        assert_eq!(agent_state_glyph(AgentState::Unknown, false, "W", "B"), "○");
+    }
 
     fn toast() -> ToastNotification {
         ToastNotification {

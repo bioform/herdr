@@ -113,6 +113,7 @@ fn spawn_server(
     cmd.env_remove("HERDR_CLIENT_SOCKET_PATH");
     cmd.env("SHELL", "/bin/sh");
     cmd.env_remove("HERDR_ENV");
+    cmd.env_remove("HERDR_SET_WINDOW_TITLE");
 
     let child = pair.slave.spawn_command(cmd).unwrap();
     register_spawned_herdr_pid(child.process_id());
@@ -624,6 +625,7 @@ fn auto_detect_default_socket_path_from_config_dir() {
     cmd.env("XDG_RUNTIME_DIR", &runtime_dir);
     cmd.env("SHELL", "/bin/sh");
     cmd.env_remove("HERDR_ENV");
+    cmd.env_remove("HERDR_SET_WINDOW_TITLE");
     // Explicitly remove socket overrides to test default path resolution.
     cmd.env_remove("HERDR_SOCKET_PATH");
     cmd.env_remove("HERDR_CLIENT_SOCKET_PATH");
