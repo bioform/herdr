@@ -18,4 +18,8 @@ pub struct ServerCapabilities {
     pub live_handoff: bool,
     #[serde(default)]
     pub detached_server_daemon: bool,
+    /// The server can drive the foreground client's outer terminal
+    /// window/tab title from agent state (`[terminal] set_window_title`).
+    #[serde(default)]
+    pub window_title: bool,
 }

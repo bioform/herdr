@@ -8606,6 +8606,11 @@
             },
             "live_handoff": {
               "type": "boolean"
+            },
+            "window_title": {
+              "default": false,
+              "description": "The server can drive the foreground client's outer terminal\nwindow/tab title from agent state (`[terminal] set_window_title`).",
+              "type": "boolean"
             }
           },
           "required": [

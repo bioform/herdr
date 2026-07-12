@@ -102,6 +102,52 @@ fn init_logging() {
     crate::logging::init_file_logging("herdr.log");
 }
 
+/// Parse the `--window-title` / `--no-window-title` launch flags into an
+/// override for `[terminal] set_window_title`. The last occurrence wins;
+/// returns `None` when neither flag is present.
+fn parse_window_title_override(args: &[String]) -> Option<bool> {
+    let mut value = None;
+    for arg in args {
+        match arg.as_str() {
+            "--window-title" => value = Some(true),
+            "--no-window-title" => value = Some(false),
+            _ => {}
+        }
+    }
+    value
+}
+
+#[cfg(test)]
+mod window_title_flag_tests {
+    use super::parse_window_title_override;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn window_title_flag_parses_and_last_wins() {
+        assert_eq!(parse_window_title_override(&args(&["herdr"])), None);
+        assert_eq!(
+            parse_window_title_override(&args(&["herdr", "--window-title"])),
+            Some(true)
+        );
+        assert_eq!(
+            parse_window_title_override(&args(&["herdr", "--no-window-title"])),
+            Some(false)
+        );
+        // Last occurrence wins when both are present.
+        assert_eq!(
+            parse_window_title_override(&args(&["herdr", "--window-title", "--no-window-title"])),
+            Some(false)
+        );
+        assert_eq!(
+            parse_window_title_override(&args(&["herdr", "--no-window-title", "--window-title"])),
+            Some(true)
+        );
+    }
+}
+
 const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Place this file at ~/.config/herdr/config.toml
 
@@ -142,6 +188,17 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Use "follow" to inherit the source pane/workspace, "home" for $HOME,
 # "current" for Herdr's process directory, or a fixed path such as "~/Projects".
 # new_cwd = "follow"
+
+# Drive the outer terminal's window/tab title from the agents running inside
+# Herdr (like tmux set-titles, but multi-agent aware). Default: false, so the
+# outer title is left untouched. When enabled, the tab shows one icon per agent
+# (animated while working) followed by the working agent's live title, or the
+# literal "herdr" when several agents are working at once.
+# set_window_title = false
+
+# Title shown when no agent is working. Empty uses the active workspace label.
+# Tokens: {workspace}, {tab}.
+# window_title_format = ""
 
 [update]
 # Update channel used by background version checks and `herdr update`.
@@ -601,6 +658,10 @@ fn main() -> io::Result<()> {
         println!("  --remote-keybindings <local|server>");
         println!("                      Keybindings for --remote app attach (default: local)");
         println!("  --handoff           Opt into live handoff for update or remote attach");
+        println!(
+            "  --window-title      Drive the outer terminal title from agents ([terminal] set_window_title)"
+        );
+        println!("  --no-window-title   Do not drive the outer terminal title");
         println!("  --default-config    Print default configuration and exit");
         println!("  --version, -V       Print version and exit");
         println!("  --help, -h          Show this help");
@@ -628,6 +689,8 @@ fn main() -> io::Result<()> {
         "--session",
         "--remote",
         "--remote-keybindings",
+        "--window-title",
+        "--no-window-title",
         "--version",
         "-V",
         "--default-config",
@@ -665,6 +728,17 @@ fn main() -> io::Result<()> {
         }
     }
 
+    // Apply the --window-title / --no-window-title launch override through an
+    // env var so it is inherited by the spawned server daemon (and honored by
+    // the in-process config load below). It overrides [terminal] set_window_title.
+    let window_title_flag = parse_window_title_override(&args);
+    if let Some(enabled) = window_title_flag {
+        std::env::set_var(
+            config::SET_WINDOW_TITLE_ENV_VAR,
+            if enabled { "1" } else { "0" },
+        );
+    }
+
     if let Some(remote_launch) = remote_launch {
         let remote_target = remote_launch.target.clone();
         if let Err(err) = remote::run_remote(remote_launch) {
@@ -680,10 +754,19 @@ fn main() -> io::Result<()> {
 
     let no_session = args.iter().any(|a| a == "--no-session");
 
+    // The window-title driver lives in the headless server, so the flag has no
+    // effect in monolithic --no-session mode.
+    if no_session && window_title_flag.is_some() {
+        eprintln!(
+            "herdr: note: --window-title/--no-window-title has no effect with --no-session \
+             (monolithic mode has no window-title driver)."
+        );
+    }
+
     // Auto-detect launch: when --no-session is NOT set, use server/client mode.
     // Check if a server is running, spawn one if needed, then attach as client.
     if !no_session {
-        if let Err(err) = server::autodetect::auto_detect_launch() {
+        if let Err(err) = server::autodetect::auto_detect_launch(window_title_flag) {
             eprintln!("herdr: {err}");
             std::process::exit(1);
         }

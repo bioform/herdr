@@ -19,6 +19,7 @@ mod session;
 pub mod state;
 mod terminal_targets;
 mod theme_sync;
+mod window_title;
 mod worktrees;
 
 use std::collections::{HashMap, HashSet};
@@ -623,6 +624,8 @@ impl App {
             default_shell: config.terminal.default_shell.clone(),
             shell_mode: config.terminal.shell_mode,
             new_terminal_cwd: config.terminal.new_cwd.clone(),
+            set_window_title: config.terminal.set_window_title,
+            window_title_format: config.terminal.window_title_format.clone(),
             pane_scrollback_limit_bytes: config.advanced.scrollback_limit_bytes,
             accent: crate::config::parse_color(&config.ui.accent),
             sound: config.ui.sound.clone(),
@@ -1462,6 +1465,8 @@ impl App {
             self.state.default_shell = config.terminal.default_shell.clone();
             self.state.shell_mode = config.terminal.shell_mode;
             self.state.new_terminal_cwd = config.terminal.new_cwd.clone();
+            self.state.set_window_title = config.terminal.set_window_title;
+            self.state.window_title_format = config.terminal.window_title_format.clone();
         }
 
         if !invalid_section("worktrees") {

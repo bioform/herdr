@@ -94,6 +94,31 @@ new_cwd = "follow"
 
 `new_cwd = "follow"` keeps the default behavior and inherits the source pane or workspace. When there is no source workspace, Herdr starts in `$HOME`. Use `"home"` to always start in `$HOME`, `"current"` to use Herdr's process directory, or a fixed path such as `"~/Projects"`. Explicit `--cwd` values from the CLI or socket API still take precedence.
 
+Drive the outer terminal's window/tab title from the agents running inside Herdr:
+
+```toml
+[terminal]
+set_window_title = true
+```
+
+Off by default, so Herdr never touches the outer title unless you opt in. When enabled, the foreground client's tab shows one status icon per agent pane — the same glyphs as the sidebar, with an animated braille spinner while an agent is working and a gentle "breathing" pulse while one is blocked — followed by the live title of the agent in the tab you are currently viewing:
+
+- **the active tab holds an agent** → that agent's own live title, whether it is working or idle, so the tab reads just like the agent's native tab (for example `⠹ Refactoring… (12s · esc to interrupt)`). With several agents the icons show them all and the body follows whichever agent tab you focus (for example `⠹ ⠹ ⠹ Reviewing the diff`). If that agent has not emitted a title yet — for instance a freshly restored agent still idling at its prompt — its name is shown instead (for example `⠹ claude`) until it does.
+- **the active tab has no agent** (a plain shell tab, or no agents at all) → the idle title below.
+
+The title updates live at about 10 Hz and is cleared back to Herdr's default when you detach or quit. This works over any terminal that honors OSC title sequences, including under `TERM=xterm`.
+
+You can also toggle this per launch without editing the config: `herdr --window-title` (or `herdr --no-window-title`) overrides `set_window_title` when Herdr starts the session's server. Because the setting belongs to the server, the flag only applies to the launch that actually starts it — if a server is already running for the session, restart it (or edit the config and `herdr server reload-config`) for the change to take effect.
+
+Choose what the tab shows when the active tab has no agent:
+
+```toml
+[terminal]
+window_title_format = "{workspace}"
+```
+
+Empty (the default) uses the active workspace label. Supported tokens are `{workspace}` and `{tab}`.
+
 ## Worktrees
 
 Set the root directory Herdr uses for Git worktree checkouts created from the sidebar:

@@ -239,6 +239,13 @@ pub struct TerminalConfig {
     pub shell_mode: ShellModeConfig,
     /// CWD policy for new interactive panes, tabs, and workspaces.
     pub new_cwd: NewTerminalCwdConfig,
+    /// Drive the outer terminal's window/tab title from the agents running
+    /// inside Herdr (like tmux `set-titles`, but multi-agent aware). Default:
+    /// false, so Herdr never touches the outer title unless opted in.
+    pub set_window_title: bool,
+    /// Template for the outer title when no agent is working. Empty uses the
+    /// active workspace label. Supports the `{workspace}` and `{tab}` tokens.
+    pub window_title_format: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1181,6 +1188,35 @@ new_cwd = "~/Projects"
             config.terminal.new_cwd,
             NewTerminalCwdConfig::Path("~/Projects".into())
         );
+    }
+
+    #[test]
+    fn set_window_title_defaults_off_and_parses() {
+        let default_config = Config::default();
+        assert!(!default_config.terminal.set_window_title);
+        assert!(default_config.terminal.window_title_format.is_empty());
+
+        let toml = r#"
+[terminal]
+set_window_title = true
+window_title_format = "{workspace}"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.terminal.set_window_title);
+        assert_eq!(config.terminal.window_title_format, "{workspace}");
+    }
+
+    #[test]
+    fn parse_bool_setting_accepts_common_forms() {
+        use crate::config::parse_bool_setting;
+        for value in ["1", "true", "TRUE", "on", "Yes", " true "] {
+            assert_eq!(parse_bool_setting(value), Some(true), "{value:?}");
+        }
+        for value in ["0", "false", "OFF", "no"] {
+            assert_eq!(parse_bool_setting(value), Some(false), "{value:?}");
+        }
+        assert_eq!(parse_bool_setting("maybe"), None);
+        assert_eq!(parse_bool_setting(""), None);
     }
 
     #[test]

@@ -298,6 +298,7 @@ fn spawn_herdr_with_config(
     cmd.env_remove("HERDR_CLIENT_SOCKET_PATH");
     cmd.env("SHELL", "/bin/sh");
     cmd.env_remove("HERDR_ENV");
+    cmd.env_remove("HERDR_SET_WINDOW_TITLE");
     if let Some(path) = path_override {
         cmd.env("PATH", path);
     }

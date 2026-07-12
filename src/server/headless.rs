@@ -184,6 +184,11 @@ const SHUTDOWN_API_TIMEOUT: Duration = Duration::from_secs(5);
 /// avoid reintroducing the idle CPU spin.
 const CLIENT_ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// How often the outer window-title driver re-renders while an agent is
+/// working, giving the spinner a ~10Hz animation and coalescing agents'
+/// high-frequency title updates to a smooth, bounded send rate.
+const WINDOW_TITLE_TICK_INTERVAL: Duration = Duration::from_millis(100);
+
 // ---------------------------------------------------------------------------
 // Headless server
 // ---------------------------------------------------------------------------
@@ -231,6 +236,22 @@ pub struct HeadlessServer {
     server_event_rx: mpsc::Receiver<ServerEvent>,
     /// Sender for server events (cloned for each client thread).
     server_event_tx: mpsc::Sender<ServerEvent>,
+    /// Animation frame for the outer window-title spinner (advances ~10Hz
+    /// while an agent is working). Independent of the sidebar animation tick so
+    /// the feature stays inert unless `[terminal] set_window_title` is on.
+    window_title_frame: u32,
+    /// The title currently shown on the foreground client because of the
+    /// window-title driver, so it is only resent on change. `None` means the
+    /// driver is not currently owning the outer title.
+    window_title_shown: Option<String>,
+    /// The client id `window_title_shown` was sent to; a foreground change
+    /// forces a resend so a newly attached client picks up the title.
+    window_title_client: Option<u64>,
+    /// Next time to re-render the animated title; `None` when idle or disabled.
+    next_window_title_tick: Option<Instant>,
+    /// True while a manual `client.window_title.set` owns the outer title; the
+    /// driver stays quiescent until a matching `.clear`.
+    window_title_override: bool,
 }
 
 fn apply_terminal_attach_scroll(
@@ -414,6 +435,11 @@ impl HeadlessServer {
             should_quit,
             server_event_rx,
             server_event_tx,
+            window_title_frame: 0,
+            window_title_shown: None,
+            window_title_client: None,
+            next_window_title_tick: None,
+            window_title_override: false,
         })
     }
 
@@ -515,6 +541,7 @@ impl HeadlessServer {
             self.stream_host_mouse_capture_mode();
 
             self.app.sync_headless_animation_timer(now);
+            self.drive_window_title(now);
 
             // 7. Render virtually and stream frames.
             if needs_render && self.app.can_render_now(now) {
@@ -541,13 +568,15 @@ impl HeadlessServer {
             }
 
             // 8. Wait for next event.
-            let next_deadline = self
-                .app
-                .next_headless_loop_deadline_with_git_refresh(
-                    now,
-                    needs_render,
-                    self.has_app_client(),
-                )
+            let app_deadline = self.app.next_headless_loop_deadline_with_git_refresh(
+                now,
+                needs_render,
+                self.has_app_client(),
+            );
+            let next_deadline = [app_deadline, self.next_window_title_tick]
+                .into_iter()
+                .flatten()
+                .min()
                 .map(|deadline| deadline.min(now + CLIENT_ACCEPT_POLL_INTERVAL))
                 .or(Some(now + CLIENT_ACCEPT_POLL_INTERVAL));
             let event = {
@@ -1250,6 +1279,15 @@ impl HeadlessServer {
                 }
             }
         }
+        // If the window-title driver was targeting this client, drop its
+        // tracking (and any manual override it held) so a disconnect cannot
+        // strand the driver. The client is going away, so no restore is sent
+        // here; graceful detach paths send the restore before removal.
+        if self.window_title_client == Some(client_id) {
+            self.window_title_shown = None;
+            self.window_title_client = None;
+            self.window_title_override = false;
+        }
         if was_foreground {
             self.promote_latest_remaining_client()
         } else {
@@ -1798,7 +1836,24 @@ impl HeadlessServer {
             None => None,
         };
         let set_title = title.is_some();
-        let changed = self.send_to_foreground_client(ServerMessage::WindowTitle { title });
+        let changed = self.send_to_foreground_client(ServerMessage::WindowTitle {
+            title: title.clone(),
+        });
+        if set_title {
+            // A delivered manual set takes over from the driver until a matching
+            // `.clear`. If no client received it, there is nothing to override.
+            if changed {
+                self.window_title_override = true;
+                self.window_title_client = self.foreground_client_id;
+                self.window_title_shown = title;
+            }
+        } else {
+            // A clear always hands control back to the driver, even when no
+            // client was attached to receive the clear message.
+            self.window_title_override = false;
+            self.window_title_client = None;
+            self.window_title_shown = None;
+        }
         let reason = match (changed, set_title) {
             (true, true) => ClientWindowTitleReason::Set,
             (true, false) => ClientWindowTitleReason::Cleared,
@@ -2442,6 +2497,11 @@ impl HeadlessServer {
             info!(client_id, "client detach requested via keybind");
 
             self.send_client_graphics_cleanup(client_id);
+            // Restore the outer terminal title on the detaching client if the
+            // window-title driver was owning it.
+            if self.window_title_client == Some(client_id) {
+                self.clear_driven_window_title();
+            }
             self.send_to_client(
                 client_id,
                 ServerMessage::ServerShutdown {
@@ -2708,6 +2768,13 @@ impl HeadlessServer {
             }
             ServerEvent::ClientDetach { client_id } => {
                 info!(client_id, "client detached");
+                // Restore the outer terminal title on the detaching client
+                // before the detach shutdown, so a client that exits on
+                // ServerShutdown still applies the restore (matching the
+                // keybind-detach path's ordering).
+                if self.window_title_client == Some(client_id) {
+                    self.clear_driven_window_title();
+                }
                 self.send_terminal_stream_detach_shutdown(client_id);
                 self.remove_client_and_resize_if_needed(client_id);
                 true
@@ -3735,6 +3802,95 @@ impl HeadlessServer {
         changed
     }
 
+    /// Restore the outer title on whichever client the driver last drove (if
+    /// any) and clear the driver's shown-state. Shared by the disabled branch,
+    /// client detach, and server shutdown so the clear protocol lives in one
+    /// place.
+    fn clear_driven_window_title(&mut self) {
+        // Clearing the driven title also releases any manual override, so a
+        // client that set a title and then went away (detach, disconnect, or a
+        // `set_window_title = false` reload) cannot strand the driver.
+        self.window_title_override = false;
+        if self.window_title_shown.take().is_some() {
+            if let Some(client) = self.window_title_client.take() {
+                let _ = self.send_to_client(client, ServerMessage::WindowTitle { title: None });
+            }
+        }
+    }
+
+    /// Config-gated driver that mirrors the working agents into the foreground
+    /// client's outer terminal title (`[terminal] set_window_title`). Runs once
+    /// per loop iteration; the spinner advances at ~10Hz and the title is only
+    /// resent when the composed string changes.
+    fn drive_window_title(&mut self, now: Instant) {
+        if !self.app.state.set_window_title {
+            // Disabled: restore the default once if the driver had been owning
+            // the title (e.g. after a mid-session `set_window_title = false` +
+            // reload); also releases any manual override. A no-op otherwise.
+            self.clear_driven_window_title();
+            self.next_window_title_tick = None;
+            return;
+        }
+        if self.window_title_override {
+            // A manual `client.window_title.set` owns the title until a matching
+            // `.clear`; leave it untouched and stay quiescent.
+            self.next_window_title_tick = None;
+            return;
+        }
+        let Some(foreground) = self.foreground_client_id else {
+            // No attached client to receive a title; do no work — not even the
+            // spinner advance — until one attaches.
+            self.next_window_title_tick = None;
+            return;
+        };
+
+        // Advance the spinner only when the ~10Hz tick is actually due, and
+        // re-arm the deadline only then — otherwise frequent loop wakes (e.g.
+        // streaming output) keep pushing the deadline forward and freeze the
+        // frame.
+        let due = self
+            .next_window_title_tick
+            .is_none_or(|deadline| now >= deadline);
+        if due {
+            self.window_title_frame = self.window_title_frame.wrapping_add(1);
+        }
+
+        let (composed, animating) = self.app.compute_window_title(self.window_title_frame);
+        let desired =
+            sanitize_window_title_text(&composed, 200).unwrap_or_else(|| "herdr".to_string());
+
+        // On a foreground handoff, restore the previously-driven client's tab
+        // before painting the new one, so a still-attached background client is
+        // not left frozen on a stale agent title.
+        if let Some(previous) = self.window_title_client {
+            if previous != foreground {
+                let _ = self.send_to_client(previous, ServerMessage::WindowTitle { title: None });
+                self.window_title_shown = None;
+                self.window_title_client = None;
+            }
+        }
+
+        // Resend only when the composed title changes — this coalesces agents'
+        // high-frequency title updates and the spinner animation to ~10Hz.
+        if self.window_title_shown.as_deref() != Some(desired.as_str())
+            && self.send_to_client(
+                foreground,
+                ServerMessage::WindowTitle {
+                    title: Some(desired.clone()),
+                },
+            )
+        {
+            self.window_title_shown = Some(desired);
+            self.window_title_client = Some(foreground);
+        }
+
+        // Keep the tick armed while any agent is working or blocked (both
+        // animate); a client is attached here, so the tick can drive it.
+        if due {
+            self.next_window_title_tick = animating.then(|| now + WINDOW_TITLE_TICK_INTERVAL);
+        }
+    }
+
     /// Initiates graceful shutdown.
     fn initiate_shutdown(&mut self) {
         if self.shutting_down {
@@ -3745,6 +3901,9 @@ impl HeadlessServer {
 
         // Clear client-local host graphics, then send ServerShutdown to all connected clients.
         self.send_all_clients_graphics_cleanup();
+        // Restore the outer terminal title on the driven client if the
+        // window-title driver was owning it, before clients tear down.
+        self.clear_driven_window_title();
         let shutdown_msg = ServerMessage::ServerShutdown {
             reason: Some("server is shutting down".to_owned()),
         };
@@ -4219,6 +4378,11 @@ mod tests {
             should_quit,
             server_event_rx,
             server_event_tx,
+            window_title_frame: 0,
+            window_title_shown: None,
+            window_title_client: None,
+            next_window_title_tick: None,
+            window_title_override: false,
         }
     }
 
@@ -4226,6 +4390,39 @@ mod tests {
         for (_, runtime) in server.app.terminal_runtimes.drain() {
             runtime.shutdown();
         }
+    }
+
+    #[test]
+    fn window_title_clear_releases_override_without_foreground_client() {
+        let mut server = test_headless_server();
+        // A manual set left an override active, then the caller clears it while
+        // no client is attached to receive the clear message.
+        server.window_title_override = true;
+        server.window_title_shown = Some("manual".to_string());
+        server.window_title_client = Some(1);
+        let _ = server.handle_client_window_title_api("id".to_string(), None);
+        assert!(
+            !server.window_title_override,
+            "clear must release the driver even with no foreground client"
+        );
+        assert!(server.window_title_shown.is_none());
+        assert!(server.window_title_client.is_none());
+        shutdown_test_runtimes(&mut server);
+    }
+
+    #[test]
+    fn removing_window_title_client_releases_override() {
+        let mut server = test_headless_server();
+        // A client held a manual override and then disconnects without a clear
+        // (e.g. the terminal tab is closed) — the driver must not be stranded.
+        server.window_title_override = true;
+        server.window_title_shown = Some("manual".to_string());
+        server.window_title_client = Some(42);
+        server.remove_client(42);
+        assert!(!server.window_title_override);
+        assert!(server.window_title_shown.is_none());
+        assert!(server.window_title_client.is_none());
+        shutdown_test_runtimes(&mut server);
     }
 
     fn read_server_message(bytes: Vec<u8>) -> ServerMessage {

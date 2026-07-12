@@ -1437,6 +1437,13 @@ pub struct AppState {
     pub default_shell: String,
     pub shell_mode: crate::config::ShellModeConfig,
     pub new_terminal_cwd: NewTerminalCwdConfig,
+    /// When true, drive the outer terminal window/tab title from agent state.
+    /// Mirrors `[terminal] set_window_title`. Default false, so the outer
+    /// title is left untouched.
+    pub set_window_title: bool,
+    /// Template for the outer title when no agent is working (`[terminal]
+    /// window_title_format`). Empty means the active workspace label.
+    pub window_title_format: String,
     pub pane_scrollback_limit_bytes: usize,
     #[allow(dead_code)] // kept for backward compat; palette.accent is the source of truth
     pub accent: Color,
@@ -1706,6 +1713,8 @@ impl AppState {
             worktree_open: None,
             worktree_remove: None,
             worktree_directory: std::path::PathBuf::from("/tmp/herdr-worktrees"),
+            set_window_title: false,
+            window_title_format: String::new(),
             collapsed_space_keys: std::collections::HashSet::new(),
             request_complete_onboarding: false,
             name_input: String::new(),
