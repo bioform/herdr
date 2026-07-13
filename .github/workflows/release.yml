@@ -359,7 +359,7 @@ jobs:
             echo "website/latest.json is already at v$VERSION"
             exit 0
           fi
-          python3 scripts/changelog.py sync-latest-json --version "$VERSION" --output website/latest.json --announcement "$ANNOUNCEMENT_PATH" --protocol "$RELEASE_PROTOCOL"
+          python3 scripts/changelog.py sync-latest-json --version "$VERSION" --repo "$GITHUB_REPOSITORY" --output website/latest.json --announcement "$ANNOUNCEMENT_PATH" --protocol "$RELEASE_PROTOCOL"
           if cmp -s "$ANNOUNCEMENT_ORIGINAL_PATH" docs/next/product-announcement.json; then
             printf 'null\n' > docs/next/product-announcement.json
           else
