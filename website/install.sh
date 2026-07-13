@@ -9,7 +9,7 @@ main() {
     echo ""
     echo "      ,ww"
     echo "     wWWWWWWW_)  herdr installer"
-    echo "     \`WWWWWW'    herdr.dev"
+    echo "     \`WWWWWW'    bioform/herdr"
     echo "      II  II"
     echo ""
 

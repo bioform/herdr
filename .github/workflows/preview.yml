@@ -318,6 +318,7 @@ jobs:
             --commit '${{ needs.preflight.outputs.commit }}' \
             --build-id '${{ needs.preflight.outputs.build_id }}' \
             --base-version '${{ needs.preflight.outputs.base_version }}' \
+            --repo "$GITHUB_REPOSITORY" \
             --output PREVIEW_NOTES.md
           python3 - <<'PY'
           import json, pathlib
@@ -349,6 +350,7 @@ jobs:
       - name: Update preview manifest
         run: |
           python3 scripts/preview.py manifest \
+            --repo "$GITHUB_REPOSITORY" \
             --output website/preview.json \
             --tag '${{ needs.preflight.outputs.tag }}' \
             --build-id '${{ needs.preflight.outputs.build_id }}' \
