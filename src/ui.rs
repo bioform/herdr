@@ -114,18 +114,24 @@ pub(super) fn spinner_frame(tick: u32) -> &'static str {
     spinner_glyph_at(tick / 8)
 }
 
-// "Breathing" pulse frames for a blocked agent in the (monochrome) outer tab
-// title: a dot that grows to the blocked fisheye `◉` and back. Kept to widely
-// supported, non-status glyphs so it reads as one pulsing indicator and can't
-// be mistaken for the done/idle/unknown icons.
-const BLOCKED_PULSE: &[&str] = &["·", "∙", "•", "◉", "•", "∙"];
+// Blocked-agent pulse for the (monochrome) outer tab title: a small dot
+// alternating with the fisheye `◉` — a gentle attention cue. Both glyphs are
+// East-Asian-Width Neutral, i.e. exactly one cell on every terminal, so the
+// title text to the right never shifts as the icon pulses. (An earlier
+// mixed-width set jittered on terminals that render ambiguous-width glyphs such
+// as `·`/`•` as two cells.) Distinct from the working braille spinner and the
+// static done/idle/unknown status icons.
+const BLOCKED_PULSE: &[&str] = &["∙", "◉"];
 
-/// Resolve the blocked "breathing" pulse glyph for the window-title driver's
-/// 100 ms frame counter. Advances at half rate (~200 ms/frame) for a gentle
-/// pulse rather than a fast blink. Only used in the monochrome tab title; the
-/// sidebar keeps a static, colored `◉`.
+/// Number of 100 ms driver frames each pulse glyph is held. ~400 ms keeps it a
+/// gentle alternation rather than a fast blink (two glyphs -> ~0.8 s cycle).
+const BLOCKED_PULSE_FRAMES_PER_GLYPH: u32 = 4;
+
+/// Resolve the blocked pulse glyph for the window-title driver's 100 ms frame
+/// counter. Only used in the monochrome tab title; the sidebar keeps a static,
+/// colored `◉`.
 pub(crate) fn blocked_pulse_glyph_at(frame: u32) -> &'static str {
-    BLOCKED_PULSE[((frame / 2) as usize) % BLOCKED_PULSE.len()]
+    BLOCKED_PULSE[((frame / BLOCKED_PULSE_FRAMES_PER_GLYPH) as usize) % BLOCKED_PULSE.len()]
 }
 
 /// Compute view geometry and reconcile pane sizes.
@@ -606,17 +612,42 @@ mod tests {
     use ratatui::{backend::TestBackend, Terminal};
 
     #[test]
-    fn blocked_pulse_cycles_and_peaks_at_fisheye() {
+    fn blocked_pulse_holds_each_glyph_and_peaks_at_fisheye() {
         use std::collections::HashSet;
-        // Half-rate cadence: each glyph is held for two consecutive 100ms frames.
-        assert_eq!(blocked_pulse_glyph_at(0), blocked_pulse_glyph_at(1));
-        assert_ne!(blocked_pulse_glyph_at(0), blocked_pulse_glyph_at(2));
-        // A full cycle visits exactly the ramp glyphs and peaks at the blocked glyph.
-        let cycle: HashSet<&str> = (0..(BLOCKED_PULSE.len() as u32 * 2))
+        let n = BLOCKED_PULSE_FRAMES_PER_GLYPH;
+        // Each glyph is held for the full frame count, then switches.
+        assert_eq!(blocked_pulse_glyph_at(0), blocked_pulse_glyph_at(n - 1));
+        assert_ne!(blocked_pulse_glyph_at(0), blocked_pulse_glyph_at(n));
+        // A full cycle visits exactly the two pulse glyphs, incl. the fisheye.
+        let cycle: HashSet<&str> = (0..(BLOCKED_PULSE.len() as u32 * n))
             .map(blocked_pulse_glyph_at)
             .collect();
         assert!(cycle.contains("◉"), "pulse must peak at the blocked glyph");
         assert_eq!(cycle, BLOCKED_PULSE.iter().copied().collect::<HashSet<_>>());
+    }
+
+    #[test]
+    fn blocked_pulse_glyphs_are_one_cell_on_every_terminal() {
+        // The point of the two-tone redesign: every frame is exactly one cell in
+        // BOTH normal and CJK/ambiguous-wide terminals, so the title text never
+        // shifts as the icon pulses. `width() == width_cjk() == 1` holds only for
+        // East-Asian-Width Neutral/Narrow glyphs — it rejects the ambiguous-width
+        // glyphs (`·`, `•`, `●`, …) whose mixed rendering caused the jitter.
+        use unicode_width::UnicodeWidthChar;
+        for g in BLOCKED_PULSE {
+            let mut chars = g.chars();
+            let c = chars.next().expect("pulse frame is one glyph");
+            assert!(
+                chars.next().is_none(),
+                "pulse frame {g:?} must be a single char"
+            );
+            assert_eq!(c.width(), Some(1), "pulse glyph {g:?} must be one cell");
+            assert_eq!(
+                c.width_cjk(),
+                Some(1),
+                "pulse glyph {g:?} must stay one cell in CJK/ambiguous-wide terminals"
+            );
+        }
     }
 
     #[test]
