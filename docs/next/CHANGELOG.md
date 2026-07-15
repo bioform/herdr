@@ -2,13 +2,10 @@
 
 ## Unreleased
 
-### Added
-- Copy mode now supports literal smart-case search with `/` and `?`, repeating with `n` and `N`, match highlighting, and tmux-style cross-line `w`/`b`/`e` word motions. (#1230)
-- Added maki detection with idle, working, and blocked screen states. (#1301, thanks @tontinton)
-- Added `terminal.set_window_title` (opt-in, default off) to drive the foreground client's outer terminal window/tab title from the agents running inside Herdr: one status icon per agent pane (animated braille while working, a gentle pulse while blocked) followed by the live title of the agent in the active tab, so with several agents the title follows whichever agent tab you focus (falling back to the agent's name until it emits a title). When the active tab has no agent it falls back to `terminal.window_title_format` (tokens `{workspace}`, `{tab}`; the workspace label by default), and a `window_title` server capability advertises the feature. The `herdr --window-title` / `--no-window-title` launch flags override the setting when Herdr starts the session's server.
+## [0.7.4] - 2026-07-15
 
 ### Fixed
-- `herdr --remote` now installs remote helper binaries without routing the binary stream through a multiline `/bin/sh -c` command, fixing installs for non-POSIX login shells such as xonsh. (#1203, thanks @nhumrich)
+- The blocked-agent window/tab title pulse no longer shifts the title text as it animates. It now alternates the hollow bullseye and filled fisheye — the hollow/filled forms of one outline — so the glyph's advance width stays constant in the terminal's proportional tab-bar font. (#14)
 
 ## [0.7.3] - 2026-07-08
 

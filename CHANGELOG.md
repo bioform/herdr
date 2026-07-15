@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [0.7.4] - 2026-07-15
+
+### Fixed
+- The blocked-agent window/tab title pulse no longer shifts the title text as it animates. It now alternates the hollow bullseye and filled fisheye — the hollow/filled forms of one outline — so the glyph's advance width stays constant in the terminal's proportional tab-bar font. (#14)
+
 ## [0.7.3] - 2026-07-08
 
 ### Fixed
