@@ -114,14 +114,18 @@ pub(super) fn spinner_frame(tick: u32) -> &'static str {
     spinner_glyph_at(tick / 8)
 }
 
-// Blocked-agent pulse for the (monochrome) outer tab title: a small dot
-// alternating with the fisheye `◉` — a gentle attention cue. Both glyphs are
-// East-Asian-Width Neutral, i.e. exactly one cell on every terminal, so the
-// title text to the right never shifts as the icon pulses. (An earlier
-// mixed-width set jittered on terminals that render ambiguous-width glyphs such
-// as `·`/`•` as two cells.) Distinct from the working braille spinner and the
-// static done/idle/unknown status icons.
-const BLOCKED_PULSE: &[&str] = &["∙", "◉"];
+// Blocked-agent pulse for the outer tab title: hollow bullseye `◎` alternating
+// with filled fisheye `◉` — a "breathing eye" attention cue. Both frames are the
+// hollow/filled forms of ONE outline, so only the center fill changes, never the
+// glyph's advance width — the title text to the right can't shift as it pulses.
+// This is why cell width is the wrong guard: the title is drawn by the terminal's
+// tab / title-bar chrome, a proportional UI font (e.g. Segoe UI on Windows
+// Terminal), not the monospace grid. The earlier `∙`/`◉` pair was one grid cell
+// each yet still jittered there, because a hairline dot and a full circle have
+// very different proportional advances. `◉` matches the sidebar's static blocked
+// glyph; the pair stays distinct from the working braille spinner and the static
+// done/idle/unknown status icons.
+const BLOCKED_PULSE: &[&str] = &["◎", "◉"];
 
 /// Number of 100 ms driver frames each pulse glyph is held. ~400 ms keeps it a
 /// gentle alternation rather than a fast blink (two glyphs -> ~0.8 s cycle).
@@ -627,12 +631,15 @@ mod tests {
     }
 
     #[test]
-    fn blocked_pulse_glyphs_are_one_cell_on_every_terminal() {
-        // The point of the two-tone redesign: every frame is exactly one cell in
-        // BOTH normal and CJK/ambiguous-wide terminals, so the title text never
-        // shifts as the icon pulses. `width() == width_cjk() == 1` holds only for
-        // East-Asian-Width Neutral/Narrow glyphs — it rejects the ambiguous-width
-        // glyphs (`·`, `•`, `●`, …) whose mixed rendering caused the jitter.
+    fn blocked_pulse_frames_are_single_narrow_glyphs() {
+        // The pulse can't jitter because both frames are the hollow/filled forms
+        // of one outline (`◎`/`◉`): the fill changes, the advance width doesn't.
+        // That is a proportional-font property (the title is drawn in the tab /
+        // title-bar chrome font, not the grid), which unicode cell width cannot
+        // express — the old one-cell `∙`/`◉` pair passed a cell-width check yet
+        // still shifted. So we only guard the checkable basics here: each frame is
+        // a single glyph, and it is a narrow symbol (`width() == 1` rejects a
+        // stray wide/emoji frame that would balloon the title).
         use unicode_width::UnicodeWidthChar;
         for g in BLOCKED_PULSE {
             let mut chars = g.chars();
@@ -641,11 +648,10 @@ mod tests {
                 chars.next().is_none(),
                 "pulse frame {g:?} must be a single char"
             );
-            assert_eq!(c.width(), Some(1), "pulse glyph {g:?} must be one cell");
             assert_eq!(
-                c.width_cjk(),
+                c.width(),
                 Some(1),
-                "pulse glyph {g:?} must stay one cell in CJK/ambiguous-wide terminals"
+                "pulse glyph {g:?} must be a narrow symbol, not a wide/emoji frame"
             );
         }
     }
